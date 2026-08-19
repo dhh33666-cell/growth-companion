@@ -4,6 +4,31 @@ import type { AppData, GainEntry, HabitLog, MealLog, Task, WorkoutLog } from "./
 
 type CloudClient = SupabaseClient;
 
+const syncQueues = new Map<string, Promise<void>>();
+
+function stableUuid(value: string) {
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) return value;
+  let hashA = 0x811c9dc5;
+  let hashB = 0x01000193;
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    hashA = Math.imul(hashA ^ code, 16777619);
+    hashB = Math.imul(hashB ^ (code + 31), 2246822519);
+  }
+  const hex = `${(hashA >>> 0).toString(16).padStart(8, "0")}${(hashB >>> 0).toString(16).padStart(8, "0")}${(hashA ^ hashB >>> 0).toString(16).padStart(8, "0")}${(hashB ^ hashA >>> 0).toString(16).padStart(8, "0")}`;
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function dedupeBy<T>(items: T[], signature: (item: T) => string) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = signature(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function taskFromRow(row: Record<string, unknown>): Task {
   return {
     id: String(row.id),
@@ -68,7 +93,11 @@ export async function loadCloudData(client: CloudClient, userId: string): Promis
       endurance: Number(profile.endurance ?? 0),
       discipline: Number(profile.discipline ?? 0),
     },
-    tasks: (tasksResult.data ?? []).map((row) => taskFromRow(row)),
+    tasks: dedupeBy((tasksResult.data ?? []).map((row) => taskFromRow(row)), (task) => JSON.stringify([
+      task.title, task.category, task.date, task.plannedMinutes, task.actualMinutes ?? null, task.isMain,
+      task.completed, task.notes ?? "", task.track, task.penalized ?? false, task.penaltyXp ?? 0,
+      task.penaltyStats ?? {},
+    ])),
     workouts: (workoutsResult.data ?? []).map((row): WorkoutLog => ({
       id: String(row.id),
       date: String(row.logged_date),
@@ -92,7 +121,7 @@ export async function loadCloudData(client: CloudClient, userId: string): Promis
       completed: Boolean(row.completed),
       note: row.note ? String(row.note) : undefined,
     })),
-    gains: gainsResult.error ? [] : (gainsResult.data ?? []).map((row): GainEntry => ({
+    gains: gainsResult.error ? [] : dedupeBy((gainsResult.data ?? []).map((row): GainEntry => ({
       id: String(row.id),
       term: String(row.term),
       definition: row.definition ? String(row.definition) : "",
@@ -100,7 +129,7 @@ export async function loadCloudData(client: CloudClient, userId: string): Promis
       category: String(row.category ?? "其他"),
       date: String(row.logged_date),
       createdAt: row.created_at ? new Date(String(row.created_at)).getTime() : 0,
-    })),
+    })), (gain) => JSON.stringify([gain.term, gain.definition, gain.source, gain.category, gain.date])),
     gainCategories: Array.isArray(profile.gain_categories) ? profile.gain_categories.map(String) : [...DEFAULT_GAIN_CATEGORIES],
     rewards: cloudRewards.length ? cloudRewards : createDefaultRewards(),
     draws: 0,
@@ -109,7 +138,7 @@ export async function loadCloudData(client: CloudClient, userId: string): Promis
   };
 }
 
-export async function syncCloudData(client: CloudClient, userId: string, data: AppData) {
+async function syncCloudDataNow(client: CloudClient, userId: string, data: AppData) {
   const profileBase = {
     id: userId,
     user_name: data.userName,
@@ -136,6 +165,7 @@ export async function syncCloudData(client: CloudClient, userId: string, data: A
 
   if (data.tasks.length) {
     const rows = (withPenalty: boolean) => data.tasks.map((task) => ({
+      id: stableUuid(`task:${task.id}`),
       user_id: userId,
       title: task.title,
       category: task.category,
@@ -150,57 +180,71 @@ export async function syncCloudData(client: CloudClient, userId: string, data: A
         ? { penalized: task.penalized ?? false, penalty_xp: task.penaltyXp ?? 0, penalty_stats: task.penaltyStats ?? {} }
         : {}),
     }));
-    const result = await client.from("tasks").insert(rows(true));
+    const result = await client.from("tasks").upsert(rows(true), { onConflict: "id" });
     if (result.error) {
-      const fallback = await client.from("tasks").insert(rows(false));
+      const fallback = await client.from("tasks").upsert(rows(false), { onConflict: "id" });
       if (fallback.error) throw fallback.error;
     }
   }
   if (data.workouts.length) {
-    const result = await client.from("workout_logs").insert(data.workouts.map((log) => ({
+    const result = await client.from("workout_logs").upsert(data.workouts.map((log) => ({
+      id: stableUuid(`workout:${log.id}`),
       user_id: userId, logged_date: log.date, movements: log.movements, state: log.state, notes: log.notes ?? null,
-    })));
+    })), { onConflict: "id" });
     if (result.error) throw result.error;
   }
   if (data.meals.length) {
-    const result = await client.from("meal_logs").insert(data.meals.map((log) => ({
+    const result = await client.from("meal_logs").upsert(data.meals.map((log) => ({
+      id: stableUuid(`meal:${log.id}`),
       user_id: userId, logged_date: log.date, meal_type: log.meal, content: log.content, health_level: log.health, is_reward: log.isReward,
-    })));
+    })), { onConflict: "id" });
     if (result.error) throw result.error;
   }
   if (data.habits.length) {
-    const result = await client.from("habit_logs").insert(data.habits.map((log) => ({
+    const result = await client.from("habit_logs").upsert(data.habits.map((log) => ({
+      id: stableUuid(`habit:${log.id}`),
       user_id: userId, logged_date: log.date, category: log.category, minutes: log.minutes, completed: log.completed, note: log.note ?? null,
-    })));
+    })), { onConflict: "id" });
     if (result.error) throw result.error;
   }
   if (data.rewards.length) {
-    const result = await client.from("rewards").insert(data.rewards.map((reward) => ({
+    const result = await client.from("rewards").upsert(data.rewards.map((reward) => ({
+      id: stableUuid(`reward:${reward.id}`),
       user_id: userId, name: reward.name, emoji: reward.emoji, reward_type: reward.type, cost: reward.cost,
       cooldown_days: reward.cooldownDays, weekly_limit: reward.weeklyLimit, enabled: reward.enabled,
       awarded_at: reward.awardedAt ?? null, claimed_at: reward.claimedAt ?? null,
-    })));
+    })), { onConflict: "id" });
     if (result.error) throw result.error;
   }
   if (data.memory.length) {
-    const result = await client.from("memory_summaries").insert(data.memory.map((content) => ({
+    const result = await client.from("memory_summaries").upsert(data.memory.map((content) => ({
+      id: stableUuid(`memory:${content}`),
       user_id: userId, summary_type: "manual", content, confirmed: true,
-    })));
+    })), { onConflict: "id" });
     if (result.error) throw result.error;
   }
   try {
     const gainsDelete = await client.from("gains").delete().eq("user_id", userId);
     if (!gainsDelete.error && data.gains.length) {
-      await client.from("gains").insert(data.gains.map((gain) => ({
+      await client.from("gains").upsert(data.gains.map((gain) => ({
+        id: stableUuid(`gain:${gain.id}`),
         user_id: userId,
         term: gain.term,
         definition: gain.definition,
         source: gain.source,
         category: gain.category,
         logged_date: gain.date,
-      })));
+      })), { onConflict: "id" });
     }
   } catch {
     // gains 表可能尚未创建，忽略错误以免影响其他数据同步
   }
+}
+
+export function syncCloudData(client: CloudClient, userId: string, data: AppData) {
+  const previous = syncQueues.get(userId) ?? Promise.resolve();
+  const current = previous.then(() => syncCloudDataNow(client, userId, data));
+  const settled = current.then(() => undefined, () => undefined);
+  syncQueues.set(userId, settled);
+  return current;
 }
