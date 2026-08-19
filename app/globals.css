@@ -135,10 +135,13 @@ h3 { font-size: 14px; }
 .tab.active { color: #06121c; background: var(--accent); border-color: var(--accent); font-weight: 700; }
 .empty { padding: 28px 22px; color: var(--muted); font-size: 13px; text-align: center; }
 .reward-card { padding: 18px; display: grid; gap: 13px; }
+.reward-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .reward-emoji { font-size: 29px; }
 .reward-name { font-size: 15px; font-weight: 600; }
 .reward-meta { color: var(--muted); font-size: 11px; }
 .reward-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; padding: 0 22px 22px; }
+.reward-form { margin: 0 22px 22px; padding: 18px; border: 1px solid rgba(84, 214, 255, .3); border-radius: 12px; background: rgba(84, 214, 255, .04); }
+.reward-switch { cursor: pointer; border: 1px solid var(--line); }
 .memory { padding: 13px 15px; border-left: 2px solid var(--accent); background: rgba(84, 214, 255, .055); color: #bdc9d9; font-size: 12px; line-height: 1.65; }
 .memory + .memory { margin-top: 8px; }
 .record-memory { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }

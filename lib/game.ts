@@ -134,6 +134,15 @@ export function weeklyRewardSpend(rewards: AppData["rewards"]) {
   }, 0);
 }
 
+export function createDefaultRewards(): AppData["rewards"] {
+  return [
+    { id: "r1", name: "一杯奶茶", emoji: "🥤", type: "消费", cost: 18, cooldownDays: 5, weeklyLimit: 1, enabled: true },
+    { id: "r2", name: "看一场电影", emoji: "🎬", type: "时间", cost: 0, cooldownDays: 7, weeklyLimit: 1, enabled: true },
+    { id: "r3", name: "玩一局游戏", emoji: "🎮", type: "时间", cost: 0, cooldownDays: 2, weeklyLimit: 2, enabled: true },
+    { id: "r4", name: "一份小食", emoji: "🍿", type: "消费", cost: 12, cooldownDays: 4, weeklyLimit: 1, enabled: true },
+  ];
+}
+
 export function createInitialData(): AppData {
   const date = today();
   return {
@@ -157,12 +166,7 @@ export function createInitialData(): AppData {
     habits: [],
     gains: [],
     gainCategories: [...DEFAULT_GAIN_CATEGORIES],
-    rewards: [
-      { id: "r1", name: "一杯奶茶", emoji: "🥤", type: "消费", cost: 18, cooldownDays: 5, weeklyLimit: 1, enabled: true },
-      { id: "r2", name: "看一场电影", emoji: "🎬", type: "时间", cost: 0, cooldownDays: 7, weeklyLimit: 1, enabled: true },
-      { id: "r3", name: "玩一局游戏", emoji: "🎮", type: "时间", cost: 0, cooldownDays: 2, weeklyLimit: 2, enabled: true },
-      { id: "r4", name: "一份小食", emoji: "🍿", type: "消费", cost: 12, cooldownDays: 4, weeklyLimit: 1, enabled: true },
-    ],
+    rewards: createDefaultRewards(),
   };
 }
 

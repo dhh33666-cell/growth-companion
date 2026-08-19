@@ -10,9 +10,9 @@ import { FormEvent, useEffect, useState } from "react";
 import { AuthScreen } from "@/components/auth-screen";
 import { Onboarding } from "@/components/onboarding";
 import { loadCloudData, syncCloudData } from "@/lib/cloud";
-import { attributeMeta, createInitialData, dayOffset, DEFAULT_GAIN_CATEGORIES, hydrateData, isDailyQualified, levelFromXp, refundTaskPenalty, settleMissedTasks, taskReward, today, weeklyRewardSpend } from "@/lib/game";
+import { attributeMeta, createDefaultRewards, createInitialData, dayOffset, DEFAULT_GAIN_CATEGORIES, hydrateData, isDailyQualified, levelFromXp, refundTaskPenalty, settleMissedTasks, taskReward, today, weeklyRewardSpend } from "@/lib/game";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
-import type { AppData, AppView, AttributeKey, GainEntry, HabitLog, MealLog, Task, TaskCategory, WorkoutLog } from "@/lib/types";
+import type { AppData, AppView, AttributeKey, GainEntry, HabitLog, MealLog, Reward, Task, TaskCategory, WorkoutLog } from "@/lib/types";
 
 const STORAGE_KEY = "growth-companion-v1";
 const navItems: { id: AppView; label: string; icon: typeof LayoutDashboard }[] = [
@@ -446,7 +446,36 @@ function GrowthView({ data }: { data: AppData }) {
 }
 
 function RewardsView({ data, update }: { data: AppData; update: (d: AppData, m?: string) => void }) {
+  const emptyReward = (): Reward => ({ id: crypto.randomUUID(), name: "", emoji: "🎁", type: "消费", cost: 0, cooldownDays: 3, weeklyLimit: 1, enabled: true });
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Reward>(() => emptyReward());
   const spend = weeklyRewardSpend(data.rewards);
+  const startAdd = () => { setEditingId(null); setDraft(emptyReward()); setShowForm(true); };
+  const startEdit = (reward: Reward) => { setEditingId(reward.id); setDraft({ ...reward }); setShowForm(true); };
+  const saveReward = (event: FormEvent) => {
+    event.preventDefault();
+    if (!draft.name.trim()) return;
+    const cleaned: Reward = {
+      ...draft,
+      name: draft.name.trim(),
+      emoji: draft.emoji.trim() || "🎁",
+      cost: Math.max(0, Number(draft.cost) || 0),
+      cooldownDays: Math.max(0, Math.floor(Number(draft.cooldownDays) || 0)),
+      weeklyLimit: Math.max(1, Math.floor(Number(draft.weeklyLimit) || 1)),
+    };
+    update({ ...data, rewards: editingId ? data.rewards.map((item) => item.id === editingId ? cleaned : item) : [...data.rewards, cleaned] }, editingId ? "奖励已更新" : "已加入奖励池");
+    setShowForm(false);
+  };
+  const removeReward = (reward: Reward) => {
+    if (data.rewards.length <= 1) return;
+    if (!window.confirm(`确定删除奖励「${reward.name}」吗？`)) return;
+    update({ ...data, rewards: data.rewards.filter((item) => item.id !== reward.id) }, "奖励已删除");
+  };
+  const restoreDefaults = () => {
+    if (!window.confirm("将用默认奖励池覆盖当前奖励，确定吗？")) return;
+    update({ ...data, rewards: createDefaultRewards() }, "已恢复默认奖励池");
+  };
   const draw = () => {
     if (data.draws < 1) return;
     const eligible = data.rewards.filter((reward) => reward.enabled);
@@ -455,7 +484,7 @@ function RewardsView({ data, update }: { data: AppData; update: (d: AppData, m?:
     const nextRewards = data.rewards.map((reward) => reward.id === selected.id ? { ...reward, awardedAt: new Date().toISOString() } : reward);
     update({ ...data, draws: data.draws - 1, rewards: nextRewards }, `掉落奖励：${selected.emoji} ${selected.name}`);
   };
-  return <><section className="quest-banner"><div><div className="quest-title">奖励抽取站</div><div className="quest-copy">完成学习主任务 + 健康/日常主任务，连续 3 天解锁一次现实奖励。</div></div><button className="btn primary" onClick={draw} disabled={data.draws < 1}><Gift size={15} /> {data.draws > 0 ? `抽取奖励（${data.draws}）` : "暂无抽奖资格"}</button></section><section className="panel" style={{ marginTop: 16 }}><div className="panel-header"><div className="panel-title"><WalletCards size={18} /><div><h2>你的奖励池</h2><div className="subtle">本周消费预算记录：¥{spend} · 奖励需要有边界，才会真正有价值。</div></div></div></div><div className="reward-grid">{data.rewards.map((reward) => <div className="reward-card panel" key={reward.id}><div className="reward-emoji">{reward.emoji}</div><div><div className="reward-name">{reward.name}</div><div className="reward-meta">{reward.type} · 冷却 {reward.cooldownDays} 天 · 每周 {reward.weeklyLimit} 次</div></div><div className="button-row"><span className={`tag ${reward.awardedAt ? "green" : ""}`}>{reward.awardedAt ? "待领取" : reward.cost ? `预算 ¥${reward.cost}` : "时间奖励"}</span>{reward.awardedAt && <button className="btn ghost" onClick={() => update({ ...data, rewards: data.rewards.map((item) => item.id === reward.id ? { ...item, awardedAt: undefined, claimedAt: new Date().toISOString() } : item) }, "已记录奖励领取")}>标记领取</button>}</div></div>)}</div></section></>;
+  return <><section className="quest-banner"><div><div className="quest-title">奖励抽取站</div><div className="quest-copy">完成学习主任务 + 健康/日常主任务，连续 3 天解锁一次现实奖励。</div></div><button className="btn primary" onClick={draw} disabled={data.draws < 1}><Gift size={15} /> {data.draws > 0 ? `抽取奖励（${data.draws}）` : "暂无抽奖资格"}</button></section><section className="panel" style={{ marginTop: 16 }}><div className="panel-header"><div className="panel-title"><WalletCards size={18} /><div><h2>你的奖励池</h2><div className="subtle">本周消费预算记录：¥{spend} · 奖励需要有边界，才会真正有价值。</div></div></div><div className="button-row"><button className="btn ghost" onClick={restoreDefaults}>恢复默认</button><button className="btn primary" onClick={startAdd}><Plus size={14} /> 新增奖励</button></div></div>{showForm && <form className="form-grid reward-form" onSubmit={saveReward}><div className="field"><label>奖励名称</label><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：看两小时综艺" autoFocus /></div><div className="field"><label>图标 Emoji</label><input value={draft.emoji} onChange={(event) => setDraft({ ...draft, emoji: event.target.value })} placeholder="例如：🎁" maxLength={4} /></div><div className="field"><label>奖励类型</label><select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as Reward["type"], cost: event.target.value === "时间" ? 0 : draft.cost })}><option value="消费">消费</option><option value="时间">时间</option></select></div><div className="field"><label>预算金额（元）</label><input type="number" min="0" disabled={draft.type === "时间"} value={draft.cost} onChange={(event) => setDraft({ ...draft, cost: Number(event.target.value) })} /></div><div className="field"><label>冷却天数</label><input type="number" min="0" value={draft.cooldownDays} onChange={(event) => setDraft({ ...draft, cooldownDays: Number(event.target.value) })} /></div><div className="field"><label>每周最多次数</label><input type="number" min="1" value={draft.weeklyLimit} onChange={(event) => setDraft({ ...draft, weeklyLimit: Number(event.target.value) })} /></div><label className="check-field full"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /> 启用此奖励（关闭后不会被抽中）</label><div className="button-row full"><button className="btn primary" type="submit">{editingId ? "保存修改" : "加入奖励池"}</button><button className="btn" type="button" onClick={() => setShowForm(false)}>取消</button></div></form>}<div className="reward-grid">{data.rewards.map((reward) => <div className="reward-card panel" key={reward.id}><div className="reward-card-header"><div className="reward-emoji">{reward.emoji}</div><div className="task-actions"><button className="btn ghost task-edit" onClick={() => startEdit(reward)} title={`编辑 ${reward.name}`}><Pencil size={14} /></button><button className="btn ghost task-delete" onClick={() => removeReward(reward)} disabled={data.rewards.length <= 1} title={data.rewards.length <= 1 ? "请至少保留一个奖励" : `删除 ${reward.name}`}><Trash2 size={14} /></button></div></div><div><div className="reward-name">{reward.name}</div><div className="reward-meta">{reward.type} · 冷却 {reward.cooldownDays} 天 · 每周 {reward.weeklyLimit} 次</div></div><div className="button-row"><button className={`tag reward-switch ${reward.enabled ? "green" : ""}`} onClick={() => update({ ...data, rewards: data.rewards.map((item) => item.id === reward.id ? { ...item, enabled: !item.enabled } : item) }, reward.enabled ? "奖励已停用" : "奖励已启用")}>{reward.enabled ? "已启用" : "已停用"}</button><span className={`tag ${reward.awardedAt ? "green" : ""}`}>{reward.awardedAt ? "待领取" : reward.cost ? `预算 ¥${reward.cost}` : "时间奖励"}</span>{reward.awardedAt && <button className="btn ghost" onClick={() => update({ ...data, rewards: data.rewards.map((item) => item.id === reward.id ? { ...item, awardedAt: undefined, claimedAt: new Date().toISOString() } : item) }, "已记录奖励领取")}>标记领取</button>}</div></div>)}</div></section></>;
 }
 
 function CoachView({ data, update }: { data: AppData; update: (d: AppData, m?: string) => void }) {

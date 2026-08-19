@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { DEFAULT_GAIN_CATEGORIES } from "./game";
+import { createDefaultRewards, DEFAULT_GAIN_CATEGORIES } from "./game";
 import type { AppData, GainEntry, HabitLog, MealLog, Task, WorkoutLog } from "./types";
 
 type CloudClient = SupabaseClient;
@@ -44,6 +44,18 @@ export async function loadCloudData(client: CloudClient, userId: string): Promis
   if (memoriesResult.error) throw memoriesResult.error;
 
   const profile = profileResult.data;
+  const cloudRewards = (rewardsResult.data ?? []).map((row) => ({
+    id: String(row.id),
+    name: String(row.name),
+    emoji: String(row.emoji ?? "🎁"),
+    type: row.reward_type as "消费" | "时间",
+    cost: Number(row.cost ?? 0),
+    cooldownDays: Number(row.cooldown_days ?? 0),
+    weeklyLimit: Number(row.weekly_limit ?? 1),
+    enabled: Boolean(row.enabled),
+    awardedAt: row.awarded_at ? String(row.awarded_at) : undefined,
+    claimedAt: row.claimed_at ? String(row.claimed_at) : undefined,
+  }));
   return {
     onboarded: Boolean(profile.onboarded),
     userName: profile.user_name,
@@ -90,18 +102,7 @@ export async function loadCloudData(client: CloudClient, userId: string): Promis
       createdAt: row.created_at ? new Date(String(row.created_at)).getTime() : 0,
     })),
     gainCategories: Array.isArray(profile.gain_categories) ? profile.gain_categories.map(String) : [...DEFAULT_GAIN_CATEGORIES],
-    rewards: (rewardsResult.data ?? []).map((row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      emoji: String(row.emoji ?? "🎁"),
-      type: row.reward_type as "消费" | "时间",
-      cost: Number(row.cost ?? 0),
-      cooldownDays: Number(row.cooldown_days ?? 0),
-      weeklyLimit: Number(row.weekly_limit ?? 1),
-      enabled: Boolean(row.enabled),
-      awardedAt: row.awarded_at ? String(row.awarded_at) : undefined,
-      claimedAt: row.claimed_at ? String(row.claimed_at) : undefined,
-    })),
+    rewards: cloudRewards.length ? cloudRewards : createDefaultRewards(),
     draws: 0,
     streak: 0,
     memory: (memoriesResult.data ?? []).map((row) => String(row.content)),
