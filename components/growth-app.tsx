@@ -15,6 +15,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase";
 import type { AppData, AppView, AttributeKey, GainEntry, HabitLog, MealLog, Reward, Task, TaskCategory, WorkoutLog } from "@/lib/types";
 
 const STORAGE_KEY = "growth-companion-v1";
+const BACKUP_STORAGE_KEY = "growth-companion-backups-v1";
 const navItems: { id: AppView; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "home", label: "今日任务", icon: LayoutDashboard },
   { id: "plan", label: "计划世界", icon: ListChecks },
@@ -28,7 +29,18 @@ const navItems: { id: AppView; label: string; icon: typeof LayoutDashboard }[] =
 
 const labels: Record<TaskCategory, string> = { learning: "数据分析", ai: "AI 实操", english: "英语", workout: "训练", habit: "习惯", social: "社交", rest: "休息" };
 
-function persist(data: AppData) { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
+function persist(data: AppData) {
+  const serialized = JSON.stringify(data);
+  window.localStorage.setItem(STORAGE_KEY, serialized);
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(BACKUP_STORAGE_KEY) ?? "[]") as { savedAt: number; data: string }[];
+    if (stored[0]?.data !== serialized) {
+      window.localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify([{ savedAt: Date.now(), data: serialized }, ...stored].slice(0, 10)));
+    }
+  } catch {
+    // 本地备份失败不应阻止主数据保存或云端同步。
+  }
+}
 const supabaseClient = getSupabaseBrowserClient();
 
 export function GrowthApp({ initialView }: { initialView: AppView }) {
@@ -505,5 +517,22 @@ function CoachView({ data, update }: { data: AppData; update: (d: AppData, m?: s
 function SettingsView({ data, update, onSignOut }: { data: AppData; update: (d: AppData, m?: string) => void; onSignOut?: () => void }) {
   const exportData = () => { const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "growth-companion-export.json"; a.click(); URL.revokeObjectURL(url); };
   const reset = () => { if (window.confirm("将清空本机演示数据并回到初始状态，确定吗？")) { const next = createInitialData(); update(next, "已恢复演示数据"); } };
-  return <div className="section-grid"><section className="panel"><div className="panel-header"><div className="panel-title"><Settings size={18} /><div><h2>个人档案</h2><div className="subtle">这些信息会帮助 AI 理解你的长期方向。</div></div></div></div><form className="form-grid" onSubmit={(event) => { event.preventDefault(); update(data, "个人档案已保存"); }}><div className="field"><label>昵称</label><input value={data.userName} onChange={(e) => update({ ...data, userName: e.target.value })} /></div><div className="field"><label>时区</label><input value="Asia/Shanghai" readOnly /></div><div className="field full"><label>长期目标</label><textarea value={data.goal} onChange={(e) => update({ ...data, goal: e.target.value })} /></div><div className="button-row full"><button className="btn primary">保存档案</button></div></form></section><section className="panel"><div className="panel-header"><div className="panel-title"><CircleHelp size={18} /><div><h2>数据与集成</h2><div className="subtle">{onSignOut ? "Supabase 云端模式" : "本地演示模式"}</div></div></div></div><div className="panel-pad"><div className="memory"><b>{onSignOut ? "Cloud sync enabled" : "Local-first"}</b><br />{onSignOut ? "任务、生活记录和成长档案会同步到当前 Supabase 用户。" : "当前数据保存在浏览器本地。配置 Supabase 环境变量后可启用云端同步。"}</div><div className="button-row" style={{ marginTop: 14 }}><button className="btn" onClick={exportData}><ArrowUpRight size={14} /> 导出 JSON</button><button className="btn" onClick={reset}><Trash2 size={14} /> 重置演示数据</button>{onSignOut && <button className="btn" onClick={onSignOut}>退出登录</button>}</div></div></section></div>;
+  const restoreBackup = () => {
+    try {
+      const backups = JSON.parse(window.localStorage.getItem(BACKUP_STORAGE_KEY) ?? "[]") as { savedAt: number; data: string }[];
+      const candidates = backups.map((backup) => {
+        try { return hydrateData(JSON.parse(backup.data)); } catch { return null; }
+      }).filter((item): item is AppData => Boolean(item));
+      const best = candidates.sort((a, b) => (
+        b.gains.length * 8 + b.tasks.length * 3 + b.workouts.length + b.meals.length + b.habits.length
+        - (a.gains.length * 8 + a.tasks.length * 3 + a.workouts.length + a.meals.length + a.habits.length)
+      ))[0];
+      if (!best) return window.alert("当前浏览器没有找到可用的本地备份。");
+      if (!window.confirm(`找到一份本机备份：${best.gains.length} 条每日收获、${best.tasks.length} 个任务。恢复后会同步到云端，确定吗？`)) return;
+      update(best, "已从本机备份恢复，正在同步到云端");
+    } catch {
+      window.alert("读取本机备份失败。");
+    }
+  };
+  return <div className="section-grid"><section className="panel"><div className="panel-header"><div className="panel-title"><Settings size={18} /><div><h2>个人档案</h2><div className="subtle">这些信息会帮助 AI 理解你的长期方向。</div></div></div></div><form className="form-grid" onSubmit={(event) => { event.preventDefault(); update(data, "个人档案已保存"); }}><div className="field"><label>昵称</label><input value={data.userName} onChange={(e) => update({ ...data, userName: e.target.value })} /></div><div className="field"><label>时区</label><input value="Asia/Shanghai" readOnly /></div><div className="field full"><label>长期目标</label><textarea value={data.goal} onChange={(e) => update({ ...data, goal: e.target.value })} /></div><div className="button-row full"><button className="btn primary">保存档案</button></div></form></section><section className="panel"><div className="panel-header"><div className="panel-title"><CircleHelp size={18} /><div><h2>数据与集成</h2><div className="subtle">{onSignOut ? "Supabase 云端模式" : "本地演示模式"}</div></div></div></div><div className="panel-pad"><div className="memory"><b>{onSignOut ? "Cloud sync enabled" : "Local-first"}</b><br />{onSignOut ? "任务、生活记录和成长档案会同步到当前 Supabase 用户。" : "当前数据保存在浏览器本地。配置 Supabase 环境变量后可启用云端同步。"}</div><div className="button-row" style={{ marginTop: 14 }}><button className="btn" onClick={exportData}><ArrowUpRight size={14} /> 导出 JSON</button><button className="btn" onClick={restoreBackup}>尝试恢复本机备份</button><button className="btn" onClick={reset}><Trash2 size={14} /> 重置演示数据</button>{onSignOut && <button className="btn" onClick={onSignOut}>退出登录</button>}</div></div></section></div>;
 }

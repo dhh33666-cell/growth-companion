@@ -67,9 +67,10 @@ export async function loadCloudData(client: CloudClient, userId: string): Promis
   if (habitsResult.error) throw habitsResult.error;
   if (rewardsResult.error) throw rewardsResult.error;
   if (memoriesResult.error) throw memoriesResult.error;
+  if (gainsResult.error) throw gainsResult.error;
 
   const profile = profileResult.data;
-  const cloudRewards = (rewardsResult.data ?? []).map((row) => ({
+  const cloudRewards = dedupeBy((rewardsResult.data ?? []).map((row) => ({
     id: String(row.id),
     name: String(row.name),
     emoji: String(row.emoji ?? "🎁"),
@@ -80,7 +81,10 @@ export async function loadCloudData(client: CloudClient, userId: string): Promis
     enabled: Boolean(row.enabled),
     awardedAt: row.awarded_at ? String(row.awarded_at) : undefined,
     claimedAt: row.claimed_at ? String(row.claimed_at) : undefined,
-  }));
+  })), (reward) => JSON.stringify([
+    reward.name, reward.emoji, reward.type, reward.cost, reward.cooldownDays,
+    reward.weeklyLimit, reward.enabled, reward.awardedAt ?? null, reward.claimedAt ?? null,
+  ]));
   return {
     onboarded: Boolean(profile.onboarded),
     userName: profile.user_name,
@@ -121,7 +125,7 @@ export async function loadCloudData(client: CloudClient, userId: string): Promis
       completed: Boolean(row.completed),
       note: row.note ? String(row.note) : undefined,
     })),
-    gains: gainsResult.error ? [] : dedupeBy((gainsResult.data ?? []).map((row): GainEntry => ({
+    gains: dedupeBy((gainsResult.data ?? []).map((row): GainEntry => ({
       id: String(row.id),
       term: String(row.term),
       definition: row.definition ? String(row.definition) : "",
@@ -158,14 +162,24 @@ async function syncCloudDataNow(client: CloudClient, userId: string, data: AppDa
     if (profileFallback.error) throw profileFallback.error;
   }
 
-  for (const table of ["tasks", "workout_logs", "meal_logs", "habit_logs", "rewards", "memory_summaries"]) {
-    const removed = await client.from(table).delete().eq("user_id", userId);
-    if (removed.error) throw removed.error;
-  }
+  const reconcile = async (table: string, rows: Record<string, unknown>[]) => {
+    const current = await client.from(table).select("id").eq("user_id", userId);
+    if (current.error) throw current.error;
+    if (rows.length) {
+      const written = await client.from(table).upsert(rows, { onConflict: "id" });
+      if (written.error) throw written.error;
+    }
+    const keepIds = new Set(rows.map((row) => String(row.id)));
+    const removeIds = (current.data ?? []).map((row) => String(row.id)).filter((id) => !keepIds.has(id));
+    if (removeIds.length) {
+      const removed = await client.from(table).delete().eq("user_id", userId).in("id", removeIds);
+      if (removed.error) throw removed.error;
+    }
+  };
 
-  if (data.tasks.length) {
+  {
     const rows = (withPenalty: boolean) => data.tasks.map((task) => ({
-      id: stableUuid(`task:${task.id}`),
+      id: stableUuid(task.id),
       user_id: userId,
       title: task.title,
       category: task.category,
@@ -180,62 +194,41 @@ async function syncCloudDataNow(client: CloudClient, userId: string, data: AppDa
         ? { penalized: task.penalized ?? false, penalty_xp: task.penaltyXp ?? 0, penalty_stats: task.penaltyStats ?? {} }
         : {}),
     }));
-    const result = await client.from("tasks").upsert(rows(true), { onConflict: "id" });
-    if (result.error) {
-      const fallback = await client.from("tasks").upsert(rows(false), { onConflict: "id" });
-      if (fallback.error) throw fallback.error;
-    }
+    try { await reconcile("tasks", rows(true)); }
+    catch { await reconcile("tasks", rows(false)); }
   }
-  if (data.workouts.length) {
-    const result = await client.from("workout_logs").upsert(data.workouts.map((log) => ({
-      id: stableUuid(`workout:${log.id}`),
+  await reconcile("workout_logs", data.workouts.map((log) => ({
+      id: stableUuid(log.id),
       user_id: userId, logged_date: log.date, movements: log.movements, state: log.state, notes: log.notes ?? null,
-    })), { onConflict: "id" });
-    if (result.error) throw result.error;
-  }
-  if (data.meals.length) {
-    const result = await client.from("meal_logs").upsert(data.meals.map((log) => ({
-      id: stableUuid(`meal:${log.id}`),
+    })));
+  await reconcile("meal_logs", data.meals.map((log) => ({
+      id: stableUuid(log.id),
       user_id: userId, logged_date: log.date, meal_type: log.meal, content: log.content, health_level: log.health, is_reward: log.isReward,
-    })), { onConflict: "id" });
-    if (result.error) throw result.error;
-  }
-  if (data.habits.length) {
-    const result = await client.from("habit_logs").upsert(data.habits.map((log) => ({
-      id: stableUuid(`habit:${log.id}`),
+    })));
+  await reconcile("habit_logs", data.habits.map((log) => ({
+      id: stableUuid(log.id),
       user_id: userId, logged_date: log.date, category: log.category, minutes: log.minutes, completed: log.completed, note: log.note ?? null,
-    })), { onConflict: "id" });
-    if (result.error) throw result.error;
-  }
-  if (data.rewards.length) {
-    const result = await client.from("rewards").upsert(data.rewards.map((reward) => ({
-      id: stableUuid(`reward:${reward.id}`),
+    })));
+  await reconcile("rewards", data.rewards.map((reward) => ({
+      id: stableUuid(reward.id),
       user_id: userId, name: reward.name, emoji: reward.emoji, reward_type: reward.type, cost: reward.cost,
       cooldown_days: reward.cooldownDays, weekly_limit: reward.weeklyLimit, enabled: reward.enabled,
       awarded_at: reward.awardedAt ?? null, claimed_at: reward.claimedAt ?? null,
-    })), { onConflict: "id" });
-    if (result.error) throw result.error;
-  }
-  if (data.memory.length) {
-    const result = await client.from("memory_summaries").upsert(data.memory.map((content) => ({
+    })));
+  await reconcile("memory_summaries", data.memory.map((content) => ({
       id: stableUuid(`memory:${content}`),
       user_id: userId, summary_type: "manual", content, confirmed: true,
-    })), { onConflict: "id" });
-    if (result.error) throw result.error;
-  }
+    })));
   try {
-    const gainsDelete = await client.from("gains").delete().eq("user_id", userId);
-    if (!gainsDelete.error && data.gains.length) {
-      await client.from("gains").upsert(data.gains.map((gain) => ({
-        id: stableUuid(`gain:${gain.id}`),
+    await reconcile("gains", data.gains.map((gain) => ({
+        id: stableUuid(gain.id),
         user_id: userId,
         term: gain.term,
         definition: gain.definition,
         source: gain.source,
         category: gain.category,
         logged_date: gain.date,
-      })), { onConflict: "id" });
-    }
+      })));
   } catch {
     // gains 表可能尚未创建，忽略错误以免影响其他数据同步
   }
