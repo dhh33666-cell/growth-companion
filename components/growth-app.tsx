@@ -10,7 +10,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { AuthScreen } from "@/components/auth-screen";
 import { Onboarding } from "@/components/onboarding";
 import { loadCloudData, syncCloudData } from "@/lib/cloud";
-import { attributeMeta, createDefaultRewards, createInitialData, dayOffset, DEFAULT_GAIN_CATEGORIES, hydrateData, isDailyQualified, levelFromXp, refundTaskPenalty, settleMissedTasks, taskReward, today, weeklyRewardSpend } from "@/lib/game";
+import { attributeMeta, createDefaultRewards, createInitialData, DEFAULT_GAIN_CATEGORIES, hydrateData, isDailyQualified, levelFromXp, refundTaskPenalty, settleMissedTasks, taskReward, today, weeklyRewardSpend } from "@/lib/game";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import type { AppData, AppView, AttributeKey, GainEntry, HabitLog, MealLog, Reward, Task, TaskCategory, WorkoutLog } from "@/lib/types";
 
@@ -309,8 +309,9 @@ function OverduePanel({ data, update }: { data: AppData; update: (d: AppData, m?
   if (!overdue.length) return null;
   const completeLate = (task: Task) => update({ ...data, tasks: data.tasks.map((item) => item.id === task.id ? { ...item, completed: true } : item) }, `已标记完成「${task.title}」（逾期不计经验）`);
   const defer = (task: Task) => {
+    if (!window.confirm(`确定将「${task.title}」延期到今天吗？已扣除的经验和属性会退回。`)) return;
     const base = refundTaskPenalty(data, task.id);
-    update({ ...base, tasks: base.tasks.map((item) => item.id === task.id ? { ...item, date: dayOffset(1), penalized: false, penaltyXp: undefined, penaltyStats: undefined } : item) }, `已延期「${task.title}」，扣除数值已退回`);
+    update({ ...base, tasks: base.tasks.map((item) => item.id === task.id ? { ...item, date: today(), penalized: false, penaltyXp: undefined, penaltyStats: undefined } : item) }, `已延期「${task.title}」到今日，扣除数值已退回`);
   };
   const remove = (task: Task) => {
     if (!window.confirm(`确定删除逾期任务「${task.title}」吗？`)) return;
