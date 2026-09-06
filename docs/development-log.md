@@ -175,7 +175,17 @@
 - Status: Completed
 - Goal: 让未完成且确认延期的逾期任务自动回到今日任务列表，而不是继续进入未来日期。
 - Completed: 修改计划页逾期任务面板的“延期”操作；用户确认后，任务日期改为当天，已扣除的经验与属性退回，逾期惩罚状态清除；增加二次确认，避免误操作。
-- Validation: TypeScript 检查通过；Vitest 6/6 通过；Next.js production build 通过；未执行 Git push，线上网站尚未修改。
+- Validation: TypeScript 检查通过；Vitest 6/6 通过；Next.js production build 通过；2026-09-06 已推送至 GitHub `main` 分支，等待 Vercel 完成自动部署。
 - Problems:
 - Decision: 点击“延期”时增加二次确认；确认后将任务日期设置为当前日期，退回已扣除的经验与属性，并清除逾期惩罚状态。
-- Next: 用户在本地 `http://localhost:3000/plan` 验证：选择一个逾期任务点击“延期”，确认后检查它是否回到今日任务；确认无误后再提交 GitHub 并部署线上版本。
+- Next: 在 Vercel 确认本次 `main` 分支部署状态为 `Ready`，再到线上计划页验证延期任务回到今日。
+
+## 2026-09-06 - 逾期任务功能上线
+
+- Status: In Progress
+- Goal: 将已在本地验证的逾期任务延期回到今日功能发布到线上，并同步更新项目文档。
+- Completed: 已将提交 `6af883d` 推送到 GitHub `main` 分支；同步修正文档中的发布状态。
+- Validation: GitHub 推送成功；Vercel 自动部署待确认。
+- Problems: Vercel 部署完成时间取决于平台构建队列。
+- Decision: 本次不新增 Supabase 表或迁移，线上仅更新应用代码和文档。
+- Next: 确认 Vercel 为 `Ready` 后，在 `https://growth-companion-gold.vercel.app/plan` 手动测试“延期”操作。
